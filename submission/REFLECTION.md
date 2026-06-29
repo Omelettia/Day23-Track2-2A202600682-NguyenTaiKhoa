@@ -59,20 +59,23 @@ windows (`inference:fail_ratio:rate5m/30m/1h/6h`). Under healthy load the fail-r
 | When | What | Evidence |
 |---|---|---|
 | _T0_ | killed `day23-app` (`docker stop`) | `submission/screenshots/alertmanager-firing.png` |
-| _T0+~120s_ | `ServiceDown` fired (`up{job="inference-api"}==0` for 1m) | `alertmanager-firing.png` |
+| _T0+~115s_ | `ServiceDown` fired (`up{job="inference-api"}==0` for 1m) | `alertmanager-firing.png` |
+| _T0+~115s_ | Slack received 🚨 **CRITICAL FIRING: ServiceDown** | `submission/screenshots/slack.png` |
 | _T1_ | restored app (`docker start`) | — |
-| _T1+~70s_ | alert resolved | (Alertmanager cleared; verified via `/api/v2/alerts`) |
+| _T1+~30s_ | alert resolved; Slack received ✅ **RESOLVED: ServiceDown** | `slack.png` |
 
-Verified end-to-end via the Alertmanager API: after the stop, a single **`ServiceDown`**
-alert (`severity=critical`, `service=inference-api`, summary "inference-api is down")
-went `state=active`; after restart it returned to 0 active alerts. Use
-`bash scripts/alert-demo.sh` to reproduce — it holds the firing state so you can capture
-the screenshot, then restores on a keypress.
+Verified end-to-end: after the stop, a single **`ServiceDown`** alert (`severity=critical`,
+`service=inference-api`, summary "inference-api is down") went `state=active` in
+Alertmanager and routed to the `slack-critical` receiver, which delivered a 🚨 firing
+message to Slack. After restart it returned to 0 active alerts and (because
+`send_resolved: true`) Slack received the ✅ resolved message. Both are in `slack.png`.
 
-> Slack delivery (item 11) was not wired in this run — no Slack workspace was used.
-> The webhook is decoupled into a mounted file (`alertmanager/slack_url`), so adding a
-> real `hooks.slack.com/...` URL there + `docker compose restart alertmanager` lights it
-> up without editing the committed config.
+> **Slack secret handling:** the webhook is decoupled into a mounted file
+> (`alertmanager/slack_url`) referenced via `global.slack_api_url_file`, **not** the
+> committed config — Alertmanager doesn't expand `{{ env }}` in `api_url`, and this keeps
+> the real `hooks.slack.com/...` URL out of git (the committed file holds only a
+> placeholder). The `slack-critical` title is status-aware (`🚨 CRITICAL FIRING` vs
+> `✅ RESOLVED`) so fire and resolve are visually distinct in the channel.
 
 ### One thing surprised me about Prometheus / Grafana
 
