@@ -19,7 +19,7 @@ COMPOSE ?= docker compose
 PY     := $(shell [ -x .venv/bin/python ] && echo $(CURDIR)/.venv/bin/python || echo python3)
 LOCUST := $(shell [ -x .venv/bin/locust ] && echo $(CURDIR)/.venv/bin/locust || echo locust)
 
-.PHONY: help setup up down restart logs smoke load alert trace drift demo verify clean lint-dashboards
+.PHONY: help setup up wait down restart logs smoke load alert trace drift demo verify clean lint-dashboards
 
 help:
 	@grep -E '^##|^[a-zA-Z_-]+:.*?## ' Makefile | sed -E 's/^## ?//; s/:.*## /\t/' | column -t -s $$'\t'
@@ -30,9 +30,25 @@ setup: ## one-time install + .env scaffold
 	@bash 00-setup/pull-images.sh
 	@$(PY) 00-setup/verify-docker.py
 
-up: ## start the stack
+up: ## start the stack and wait until every service is ready
 	$(COMPOSE) up -d
-	@echo "Stack starting. Run 'make smoke' to verify (allow ~30s for first start)."
+	@$(MAKE) --no-print-directory wait
+
+wait: ## block until all 7 services are ready (Grafana provisioning + Loki ingester take ~45-60s)
+	@echo "Waiting for services to become ready (Loki ingester is the slowest, ~45-60s)..."
+	@for i in $$(seq 1 36); do \
+	  if curl -fsS http://localhost:8000/healthz   >/dev/null 2>&1 \
+	  && curl -fsS http://localhost:9090/-/healthy >/dev/null 2>&1 \
+	  && curl -fsS http://localhost:9093/-/healthy >/dev/null 2>&1 \
+	  && curl -fsS http://localhost:3000/api/health >/dev/null 2>&1 \
+	  && curl -fsS http://localhost:3100/ready     >/dev/null 2>&1 \
+	  && curl -fsS http://localhost:16686/         >/dev/null 2>&1 \
+	  && curl -fsS http://localhost:8888/metrics   >/dev/null 2>&1; then \
+	    echo "  all 7 services ready (after $$((i*5))s)"; exit 0; \
+	  fi; \
+	  sleep 5; \
+	done; \
+	echo "  WARNING: not all services ready after 180s — run 'make smoke' to see which"; exit 0
 
 down: ## stop the stack (preserves volumes)
 	$(COMPOSE) down
