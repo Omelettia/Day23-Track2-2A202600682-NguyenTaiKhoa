@@ -31,6 +31,8 @@ TOOLS = {"search": tool_search, "get_price": tool_get_price,
          "place_order": tool_place_order, "inventory": tool_flaky}
 
 # ---- mock agent "plans" (what a policy/LLM would decide). Each is a trajectory.
+# A tool name NOT in TOOLS = a hallucinated tool (the agent invented a tool the
+# registry doesn't have) — a distinct AgentOps failure mode from a tool 503.
 TASKS = [
     {"goal": "Mua SKU rẻ nhất", "plan": [("search", "shoes"), ("get_price", "SKU-1"),
                                           ("place_order", "SKU-1")], "expect": True},
@@ -38,6 +40,8 @@ TASKS = [
                                                   ("get_price", "SKU-2"), ("place_order", "SKU-2")],
      "expect": True},  # has a flaky tool -> tool error + retry
     {"goal": "So sánh giá (lỗi vòng lặp)", "plan": [("get_price", "SKU-1")] * 6, "expect": False},  # loop
+    {"goal": "Hoàn tiền đơn cũ (tool ảo)", "plan": [("search", "old-order"),
+                                                    ("refund", "OD-77")], "expect": False},  # hallucinated tool
 ]
 MAX_STEPS = 8
 
@@ -73,48 +77,79 @@ def detect_loop(actions, window=3):
 def run_task(task, tracer):
     """Execute one trajectory; return per-task SLI record + emit spans."""
     from contextlib import contextmanager
+    try:
+        from opentelemetry.trace import Status, StatusCode
+    except Exception:
+        Status = StatusCode = None
+
     @contextmanager
     def span(name, attrs):
         if not tracer:
-            yield
+            yield None
             return
         with tracer.start_as_current_span(name) as sp:
             for k, v in attrs.items():
                 sp.set_attribute(k, v)
-            yield
+            yield sp
 
-    steps = tool_calls = tool_errors = tokens = 0
+    def mark_error(sp, msg):
+        # ERROR status makes the trace survive the Collector's tail-sampler
+        # (keep-errors policy) so failure trajectories are visible in Jaeger.
+        if sp is not None and Status is not None:
+            sp.set_status(Status(StatusCode.ERROR, msg))
+
+    steps = tool_calls = tool_errors = tokens = hallucinated = 0
     actions, success = [], False
     with span("invoke_agent", {"gen_ai.operation.name": "invoke_agent",
-                               "gen_ai.agent.name": "shopbot", "agent.goal": task["goal"]}):
+                               "gen_ai.agent.name": "shopbot", "agent.goal": task["goal"]}) as root:
         for (tool, arg) in task["plan"]:
             if steps >= MAX_STEPS:
                 break
             steps += 1
             actions.append((tool, arg))
             with span("execute_tool", {"gen_ai.operation.name": "execute_tool",
-                                       "gen_ai.tool.name": tool}):
+                                       "gen_ai.tool.name": tool}) as ts:
                 tool_calls += 1
-                try:
-                    out = TOOLS[tool](arg)
-                    tokens += out.get("tokens", 20)
-                    if tool == "place_order":
-                        success = True
-                except Exception:
+                fn = TOOLS.get(tool)
+                if fn is None:
+                    # Hallucinated tool: agent called a tool the registry lacks.
+                    hallucinated += 1
                     tool_errors += 1
-                    tokens += 15  # the failed attempt still cost tokens
+                    tokens += 10  # the bad call still cost a model turn
+                    mark_error(ts, f"hallucinated tool: {tool}")
+                else:
+                    try:
+                        out = fn(arg)
+                        tokens += out.get("tokens", 20)
+                        if tool == "place_order":
+                            success = True
+                    except Exception as e:
+                        tool_errors += 1
+                        tokens += 15  # the failed attempt still cost tokens
+                        mark_error(ts, f"tool error: {e}")
             if detect_loop(actions):
                 break  # agent caught in a loop -> abort (no-progress)
-    looped = detect_loop(actions)
+
+        looped = detect_loop(actions)
+        modes = []
+        if looped:
+            modes.append("loop/no-progress")
+        if hallucinated:
+            modes.append("hallucinated-tool")
+        if tool_errors and not hallucinated:
+            modes.append("tool-error")
+        if not success:
+            modes.append("task-failed")
+        if modes:
+            mark_error(root, ",".join(modes))
+
     return {
         "goal": task["goal"], "steps": steps, "tool_calls": tool_calls,
-        "tool_errors": tool_errors, "tokens": tokens,
+        "tool_errors": tool_errors, "hallucinated_tool_calls": hallucinated,
+        "tokens": tokens,
         "cost_usd": round(tokens / 1000 * PRICE_PER_1K, 6),
         "success": success, "looped": looped,
-        "failure_modes": ([] if success and not looped else
-                          (["loop/no-progress"] if looped else []) +
-                          (["tool-error"] if tool_errors else []) +
-                          ([] if success else ["task-failed"])),
+        "failure_modes": modes,
     }
 
 
@@ -140,6 +175,7 @@ def main():
                                  max(sum(t["tool_calls"] for t in tasks), 1), 3),
         "cost_per_task_usd": round(sum(t["cost_usd"] for t in tasks) / n, 6),
         "loops_detected": sum(t["looped"] for t in tasks),
+        "hallucinated_tool_calls": sum(t["hallucinated_tool_calls"] for t in tasks),
     }
     report = {"generated_at": time.strftime("%H:%M:%SZ", time.gmtime()),
               "span_export": bool(prov), "agent_slis": agg, "per_task": tasks}

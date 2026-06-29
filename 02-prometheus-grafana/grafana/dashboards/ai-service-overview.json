@@ -37,7 +37,7 @@
       "id": 3, "gridPos": {"x": 0, "y": 8, "w": 6, "h": 6},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{
-        "expr": "100 * (sum(rate(inference_requests_total{status=\"error\"}[5m])) / sum(rate(inference_requests_total[5m])))",
+        "expr": "100 * ((sum(rate(inference_requests_total{status=\"error\"}[5m])) or vector(0)) / sum(rate(inference_requests_total[5m])))",
         "refId": "A"
       }],
       "fieldConfig": {"defaults": {"unit": "percent",

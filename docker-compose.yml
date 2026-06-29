@@ -33,6 +33,10 @@ services:
     container_name: day23-prometheus
     ports:
       - "127.0.0.1:9090:9090"
+    # Lets Prometheus reach host-run prior-day stub exporters (§05 day19/day20)
+    # via host.docker.internal on both Docker Desktop and plain Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./02-prometheus-grafana/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./02-prometheus-grafana/prometheus/rules:/etc/prometheus/rules:ro
@@ -57,8 +61,7 @@ services:
       - "127.0.0.1:9093:9093"
     volumes:
       - ./02-prometheus-grafana/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-    environment:
-      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/REPLACE/ME}
+      - ./02-prometheus-grafana/alertmanager/slack_url:/etc/alertmanager/slack_url:ro
     networks: [obs]
 
   grafana:

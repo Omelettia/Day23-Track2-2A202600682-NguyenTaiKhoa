@@ -3,14 +3,15 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.venv-evidently/
 venv/
 .pytest_cache/
 
 # Lab artifacts (generated)
 benchmarks/*.csv
 benchmarks/*.json
-submission/screenshots/*.png
-submission/screenshots/*.jpg
+# NOTE: submission screenshots ARE the graded deliverable (rubric items 4,7,8,9,
+# 10,12,13,17,19,20 + B3) and MUST be committed — do not ignore them.
 
 # Local OS junk
 .DS_Store
@@ -25,3 +26,5 @@ Thumbs.db
 # AgentOps bonus generated artifact (students create their own in submission/)
 agentops-report.json
 BONUS-agentops/agentops-report.json
+# ...but DO commit the graded submission copy (B3 deliverable)
+!submission/agentops-report.json

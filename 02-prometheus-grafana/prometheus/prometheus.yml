@@ -27,15 +27,18 @@ scrape_configs:
     static_configs:
       - targets: ['otel-collector:8888']
 
-  # Day 19 vector-store integration (optional, see §05)
-  # Uncomment + set DAY19_QDRANT_URL in .env
-  # - job_name: 'day19-qdrant'
-  #   static_configs:
-  #     - targets: ['host.docker.internal:6333']
-  #   metrics_path: /metrics
+  # Day 19 vector-store integration (§05). Real Qdrant exposes /metrics on :6333;
+  # when it isn't running, monitor-day19-vector-store.py emits stub metrics on
+  # :9101 so the cross-day dashboard panel still renders. Target stays DOWN
+  # (panel = "No Data") on a clean clone where neither is running — that's fine.
+  - job_name: 'day19-stub'
+    static_configs:
+      - targets: ['host.docker.internal:9101']
+    metrics_path: /metrics
 
-  # Day 20 model-serving integration (optional, see §05)
-  # - job_name: 'day20-llamacpp'
-  #   static_configs:
-  #     - targets: ['host.docker.internal:8080']
-  #   metrics_path: /metrics
+  # Day 20 model-serving integration (§05). monitor-day20-llama-cpp.py stubs
+  # llama.cpp metrics on :9102 (real sidecar would be on :8080).
+  - job_name: 'day20-stub'
+    static_configs:
+      - targets: ['host.docker.internal:9102']
+    metrics_path: /metrics
